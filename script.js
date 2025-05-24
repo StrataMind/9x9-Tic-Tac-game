@@ -7,11 +7,19 @@ const miniBoards = [
 // Game State Variables
 let currentPlayer = 'X';
 let gameActive = true;
+let gameMode = 'pvp'; // 'pvp' for Player vs Player, 'pvc' for Player vs Computer
+const AI_PLAYER = 'O'; // Define AI's symbol
+const HUMAN_PLAYER = 'X'; // Define Human's symbol
+
 let miniBoardStates = {}; // Stores { cells: [...], winner: null, isFull: false }
 let mainBoardWinners = {}; // Stores { t1: null, t2: 'X', ... }
 let lastPlayedOuterBoardId = null; // ID of the mini-board where the last move was made
 let activeMiniBoardIds = []; // IDs of mini-boards where the current player can play
 
+// DOM Element References
+const modeSelectionScreenElement = document.getElementById('mode-selection-screen');
+const gameScreenElement = document.getElementById('game-screen');
+const startGameButtonElement = document.getElementById('start-game-button');
 const gameStatusElement = document.getElementById('game-status');
 const mainBoardElement = document.getElementById('board');
 const restartButton = document.getElementById('restart-button');
@@ -19,6 +27,10 @@ const restartButton = document.getElementById('restart-button');
 const gameOverOverlay = document.getElementById('game-over-overlay');
 const gameOverMessageElement = document.getElementById('game-over-message');
 const playAgainButton = document.getElementById('play-again-button');
+// Rule Book Overlay Elements
+const rulebookButton = document.getElementById('rulebook-button');
+const rulebookOverlay = document.getElementById('rulebook-overlay');
+const closeRulebookButton = document.getElementById('close-rulebook-button');
 
 
 function findPosition(boardId) {
@@ -49,13 +61,42 @@ function getNextPotentialMiniBoards(playedBoardId) {
   return Array.from(validBoards);
 }
 
-function initializeGame() {
-  currentPlayer = 'X';
-  gameActive = true;
+function showModeSelectionScreen() {
+  modeSelectionScreenElement.classList.remove('hidden');
+  gameScreenElement.classList.add('hidden');
+  gameOverOverlay.classList.add('overlay-hidden'); // Ensure game over is hidden
+  gameOverOverlay.classList.remove('visible');
+
+  // Reset game state variables for a truly new game session
+  currentPlayer = HUMAN_PLAYER;
+  gameActive = false; // Game is not active until mode is selected and game starts
   lastPlayedOuterBoardId = null;
   miniBoardStates = {};
   mainBoardWinners = {};
-  mainBoardElement.innerHTML = ''; // Clear previous board
+  activeMiniBoardIds = [];
+  mainBoardElement.innerHTML = ''; // Clear the board
+  gameStatusElement.innerHTML = 'Select a game mode to start!'; // Initial message
+
+  // Clear highlights from any previous game
+  document.querySelectorAll('.mini-board.highlight').forEach(el => el.classList.remove('highlight'));
+  document.querySelectorAll('.mini-board.won-x, .mini-board.won-o').forEach(el => {
+    el.classList.remove('won-x', 'won-o');
+    el.querySelectorAll('svg.winning-line-svg').forEach(svg => svg.remove());
+  });
+}
+
+function startGame() {
+  // Read selected game mode
+  const selectedMode = document.querySelector('input[name="gameMode"]:checked');
+  gameMode = selectedMode ? selectedMode.value : 'pvp';
+
+  // Initialize game state for the actual game start
+  currentPlayer = HUMAN_PLAYER;
+  gameActive = true; // Now the game is active
+  lastPlayedOuterBoardId = null;
+  miniBoardStates = {}; // Ensure these are fresh if not fully reset in showModeSelection
+  mainBoardWinners = {};
+  mainBoardElement.innerHTML = ''; // Clear board before rebuilding
 
   miniBoards.flat().forEach(boardId => {
     // Clear any existing SVG lines from previous games if any
@@ -85,67 +126,145 @@ function initializeGame() {
 
   updateActiveMiniBoardsAndHighlight();
   updateGameStatusDisplay();
-  gameOverOverlay.classList.add('overlay-hidden');
-  gameOverOverlay.classList.remove('visible');
+
+  // Hide mode selection and show game screen
+  modeSelectionScreenElement.classList.add('hidden');
+  gameScreenElement.classList.remove('hidden');
 }
 
+
+// Centralized function to process a move, update state, and check for wins/draws
+function processMove(miniBoardId, cellIndex, player) {
+  miniBoardStates[miniBoardId].cells[cellIndex] = player;
+  const clickedCellElement = mainBoardElement.querySelector(`.cell[data-mini-board-id="${miniBoardId}"][data-cell-index="${cellIndex}"]`);
+  if (clickedCellElement) {
+    clickedCellElement.textContent = player;
+    clickedCellElement.classList.add(player.toLowerCase());
+  }
+
+  const winningPattern = checkWinner(miniBoardStates[miniBoardId].cells, player);
+  if (winningPattern && miniBoardStates[miniBoardId].winner === null) {
+    miniBoardStates[miniBoardId].winner = player;
+    mainBoardWinners[miniBoardId] = player;
+    drawWinningLine(miniBoardId, winningPattern, player);
+
+    if (checkMainBoardWinner(player)) {
+      gameActive = false;
+      showGameOver(`${player} wins the game!`);
+      return true; // Game ended
+    }
+  }
+
+  if (miniBoardStates[miniBoardId].cells.every(cell => cell !== null)) {
+    miniBoardStates[miniBoardId].isFull = true;
+  }
+
+  if (Object.values(miniBoardStates).every(mb => mb.winner !== null || mb.isFull)) {
+    if (!checkMainBoardWinner(HUMAN_PLAYER) && !checkMainBoardWinner(AI_PLAYER)) {
+      gameActive = false;
+      showGameOver("It's a draw!");
+      return true; // Game ended
+    }
+  }
+  return false; // Game continues
+}
+
+
 function handleCellClick(event) {
-  if (!gameActive) return;
+  if (!gameActive || (gameMode === 'pvc' && currentPlayer === AI_PLAYER)) {
+    // If game not active, or if it's PVC mode and AI's turn, human clicks are ignored
+    return;
+  }
 
   const clickedCell = event.target;
   const miniBoardId = clickedCell.dataset.miniBoardId;
   const cellIndex = parseInt(clickedCell.dataset.cellIndex);
 
-  // Validate move
-  if (!activeMiniBoardIds.includes(miniBoardId) || // Must be in a currently active mini-board
-      miniBoardStates[miniBoardId].cells[cellIndex] !== null) { // Cell must be empty
-    // Optionally, provide feedback for invalid move
-    console.log("Invalid move attempt:", miniBoardId, cellIndex, "Active boards:", activeMiniBoardIds);
+  if (!activeMiniBoardIds.includes(miniBoardId) || miniBoardStates[miniBoardId].cells[cellIndex] !== null) {
+    console.log("Invalid move attempt by human:", miniBoardId, cellIndex, "Active boards:", activeMiniBoardIds);
     return;
   }
 
-  // Make the move
-  miniBoardStates[miniBoardId].cells[cellIndex] = currentPlayer;
-  clickedCell.textContent = currentPlayer;
-  clickedCell.classList.add(currentPlayer.toLowerCase());
+  const gameEnded = processMove(miniBoardId, cellIndex, currentPlayer);
+  if (gameEnded) return;
 
-  // Check for mini-board win (only if not already won) or full
-  // A mini-board's win status is fixed once won.
-  const winningPattern = checkWinner(miniBoardStates[miniBoardId].cells, currentPlayer);
+  lastPlayedOuterBoardId = miniBoardId;
+  currentPlayer = (currentPlayer === HUMAN_PLAYER) ? AI_PLAYER : HUMAN_PLAYER; // Switch player
 
-  // Only process this as a new win if the board wasn't already won.
-  // This ensures the line is drawn only for the first winning combination.
-  if (winningPattern && miniBoardStates[miniBoardId].winner === null) {
-    miniBoardStates[miniBoardId].winner = currentPlayer;
-    mainBoardWinners[miniBoardId] = currentPlayer;
-    drawWinningLine(miniBoardId, winningPattern, currentPlayer); // Draw the line
+  updateActiveMiniBoardsAndHighlight();
+  updateGameStatusDisplay();
 
-    // Check for main game win
-    if (checkMainBoardWinner(currentPlayer)) {
-      gameActive = false;
-      // updateGameStatusDisplay(`${currentPlayer} wins the game!`); // Message handled by overlay
-      showGameOver(`${currentPlayer} wins the game!`);
-      return; // Game ends
+  if (gameMode === 'pvc' && currentPlayer === AI_PLAYER && gameActive) {
+    // Disable board interaction for human while AI thinks
+    mainBoardElement.style.pointerEvents = 'none';
+    setTimeout(() => { // Add a small delay for AI's move to feel more natural
+        makeComputerMove();
+        // Re-enable board interaction after AI move
+        mainBoardElement.style.pointerEvents = 'auto';
+    }, 750); // 750ms delay
+  }
+}
+
+function makeComputerMove() {
+  if (!gameActive) return;
+
+  console.log("AI's turn. Active boards:", activeMiniBoardIds);
+  if (activeMiniBoardIds.length === 0) {
+      console.error("AI has no valid boards to play on, but game is active.");
+      // This case should ideally be prevented by draw/win conditions.
+      // If it happens, it might indicate a logic flaw in determining active boards or game end.
+      return;
+  }
+
+  // Simple AI: Pick a random active mini-board, then a random empty cell in it.
+  const randomBoardIndex = Math.floor(Math.random() * activeMiniBoardIds.length);
+  const chosenMiniBoardId = activeMiniBoardIds[randomBoardIndex];
+
+  const emptyCellsInChosenBoard = [];
+  miniBoardStates[chosenMiniBoardId].cells.forEach((cell, index) => {
+    if (cell === null) {
+      emptyCellsInChosenBoard.push(index);
     }
-  }
-  // Separately, check if the board is now full, regardless of win status.
-  if (miniBoardStates[miniBoardId].cells.every(cell => cell !== null)) {
-    miniBoardStates[miniBoardId].isFull = true;
-  }
+  });
 
-  // Check for game draw
-  if (Object.values(miniBoardStates).every(mb => mb.winner !== null || mb.isFull)) {
-      if (!checkMainBoardWinner('X') && !checkMainBoardWinner('O')) {
-          gameActive = false;
-          // updateGameStatusDisplay("It's a draw!"); // Message handled by overlay
-          showGameOver("It's a draw!");
-          return;
+  if (emptyCellsInChosenBoard.length === 0) {
+      // This should not happen if activeMiniBoardIds are correctly filtered for non-full boards.
+      // If it does, it means a full board was considered active.
+      // As a fallback, try another active board or re-evaluate logic.
+      console.error(`AI chose board ${chosenMiniBoardId} which is full or has no empty cells. Active:`, activeMiniBoardIds, "States:", miniBoardStates);
+      // For now, let's try to find *any* playable move if this rare case occurs.
+      // This part is a safety net and indicates a potential deeper issue if frequently hit.
+      for (const boardId of activeMiniBoardIds) {
+          const cells = miniBoardStates[boardId].cells;
+          for (let i = 0; i < cells.length; i++) {
+              if (cells[i] === null) {
+                  console.warn("AI fallback: found move in", boardId, "at", i);
+                  const gameEndedByAI = processMove(boardId, i, AI_PLAYER);
+                  if (gameEndedByAI) return;
+                  lastPlayedOuterBoardId = boardId;
+                  currentPlayer = HUMAN_PLAYER;
+                  updateActiveMiniBoardsAndHighlight();
+                  updateGameStatusDisplay();
+                  return;
+              }
+          }
       }
+      console.error("AI could not find any move. This is a critical error.");
+      // Potentially declare a draw or end game if AI truly has no moves.
+      return;
   }
 
-  // Determine next player and active boards
-  lastPlayedOuterBoardId = miniBoardId; // The board just played in
-  currentPlayer = currentPlayer === 'X' ? 'O' : 'X';
+  const randomCellIndexInBoard = Math.floor(Math.random() * emptyCellsInChosenBoard.length);
+  const chosenCellIndex = emptyCellsInChosenBoard[randomCellIndexInBoard];
+
+  console.log(`AI chose to play in ${chosenMiniBoardId} at cell ${chosenCellIndex}`);
+
+  const gameEndedByAI = processMove(chosenMiniBoardId, chosenCellIndex, AI_PLAYER);
+  if (gameEndedByAI) return;
+
+  lastPlayedOuterBoardId = chosenMiniBoardId;
+  currentPlayer = HUMAN_PLAYER; // Switch back to human
+
   updateActiveMiniBoardsAndHighlight();
   updateGameStatusDisplay();
 }
@@ -166,13 +285,13 @@ function updateActiveMiniBoardsAndHighlight() {
   } else if (lastPlayedOuterBoardId === null) {
     // First move: all non-full boards are active
     activeMiniBoardIds = miniBoards.flat().filter(boardId =>
-      !miniBoardStates[boardId].isFull // Playable if not full, regardless of won status
+      !miniBoardStates[boardId].isFull
     );
   } else {
     // Subsequent moves
     let potentialNextBoards = getNextPotentialMiniBoards(lastPlayedOuterBoardId);
     activeMiniBoardIds = potentialNextBoards.filter(boardId =>
-      !miniBoardStates[boardId].isFull // Playable if not full
+      !miniBoardStates[boardId].isFull
     );
 
     // New Fallback Rule (Row-Priority):
@@ -196,7 +315,7 @@ function updateActiveMiniBoardsAndHighlight() {
   activeMiniBoardIds.forEach(id => {
     const boardElement = document.getElementById(id);
     // Ensure element exists and the board itself is not won (though activeMiniBoardIds should already filter this)
-    if (boardElement && !miniBoardStates[id].isFull) { // Highlight if not full
+    if (boardElement && !miniBoardStates[id].isFull) {
         boardElement.classList.add('highlight');
     }
   });
@@ -206,7 +325,7 @@ function drawWinningLine(miniBoardId, pattern, player) {
   const miniBoardElement = document.getElementById(miniBoardId);
   if (!miniBoardElement) return;
 
-  miniBoardElement.classList.add(`won-${player.toLowerCase()}`); // Add class for general won styling
+  miniBoardElement.classList.add(`won-${player.toLowerCase()}`);
 
   const cellCenters = [ // Relative coordinates (percentages) for cell centers
     { x: 16.67, y: 16.67 }, { x: 50, y: 16.67 }, { x: 83.33, y: 16.67 },
@@ -215,7 +334,7 @@ function drawWinningLine(miniBoardId, pattern, player) {
   ];
 
   const startCellIndex = pattern[0];
-  const endCellIndex = pattern[2]; // For a 3-in-a-row, the line goes from first to third
+  const endCellIndex = pattern[2];
 
   const startPoint = cellCenters[startCellIndex];
   const endPoint = cellCenters[endCellIndex];
@@ -224,13 +343,13 @@ function drawWinningLine(miniBoardId, pattern, player) {
   if (!svg) {
     svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute('class', 'winning-line-svg');
-    svg.setAttribute('viewBox', '0 0 100 100'); // Use a 100x100 coordinate system
+    svg.setAttribute('viewBox', '0 0 100 100');
     svg.style.position = 'absolute';
     svg.style.top = '0';
     svg.style.left = '0';
     svg.style.width = '100%';
     svg.style.height = '100%';
-    svg.style.pointerEvents = 'none'; // So it doesn't block clicks on cells underneath
+    svg.style.pointerEvents = 'none';
     miniBoardElement.appendChild(svg);
   }
 
@@ -239,10 +358,10 @@ function drawWinningLine(miniBoardId, pattern, player) {
   line.setAttribute('y1', startPoint.y + '%');
   line.setAttribute('x2', endPoint.x + '%');
   line.setAttribute('y2', endPoint.y + '%');
-  line.setAttribute('stroke', player === 'X' ? '#7dc3ff' : '#ff7f7f'); // Updated to dark theme player colors
-  line.setAttribute('stroke-width', '5'); // Adjust thickness as needed
-  line.classList.add('winning-stroke'); // Add class for animation
-  line.setAttribute('stroke-linecap', 'round'); // Makes line ends rounded
+  line.setAttribute('stroke', player === HUMAN_PLAYER ? '#7dc3ff' : '#ff7f7f'); // X is blue, O is red
+  line.setAttribute('stroke-width', '5');
+  line.classList.add('winning-stroke');
+  line.setAttribute('stroke-linecap', 'round');
   svg.appendChild(line);
 }
 
@@ -275,22 +394,29 @@ function checkMainBoardWinner(player) {
 }
 
 function updateGameStatusDisplay(message) {
-  if (message) {
-    gameStatusElement.textContent = message;
+  if (message) { // For direct messages like win/draw from showGameOver
+    gameStatusElement.innerHTML = message; // Use innerHTML if message might contain HTML
   } else if (!gameActive) {
     // If game ended and no specific win/draw message was passed,
     // it implies the status was already set or needs no further update.
     return;
   } else {
-    const playerIndicator = currentPlayer === 'X' ? `<span class="player-x-indicator">X</span>` : `<span class="player-o-indicator">O</span>`;
-    let statusText = `Player ${playerIndicator}'s turn. `;
+    let playerDisplay;
+    if (currentPlayer === HUMAN_PLAYER) {
+        playerDisplay = `<span class="player-x-indicator">${HUMAN_PLAYER}</span> (You)`;
+    } else if (gameMode === 'pvc' && currentPlayer === AI_PLAYER) {
+        playerDisplay = `<span class="player-o-indicator">${AI_PLAYER}</span> (Computer)`;
+    } else { // PvP mode, O player
+        playerDisplay = `<span class="player-o-indicator">${currentPlayer}</span>`;
+    }
+
+    let statusText = `Player ${playerDisplay}'s turn. `;
 
     const allCurrentlyPlayableBoards = miniBoards.flat().filter(id =>
         // For status display, consider a board "playable" if it's not full,
         // even if won, because moves are allowed in won-but-not-full boards.
         !miniBoardStates[id].isFull
     );
-
     const isPlayAnywhereAmongAvailable = activeMiniBoardIds.length === allCurrentlyPlayableBoards.length &&
                                  activeMiniBoardIds.every(id => allCurrentlyPlayableBoards.includes(id));
     
@@ -304,11 +430,10 @@ function updateGameStatusDisplay(message) {
     } else if (activeMiniBoardIds.length > 0) {
         statusText += `Play in highlighted mini-board(s): ${activeMiniBoardIds.join(', ')}.`;
     } else {
-         statusText += "Determining next move..."; // Should ideally not be hit if game is active and playable
+         statusText += "Determining next move...";
          console.warn("updateGameStatusDisplay: No active mini-boards identified while game is active.");
     }
-    gameStatusElement.textContent = statusText;
-    gameStatusElement.innerHTML = statusText; // Use innerHTML to render the span
+    gameStatusElement.innerHTML = statusText;
   }
 }
 
@@ -317,18 +442,37 @@ function updateGameStatusDisplay(message) {
 // For dynamically created elements (like cells), event listeners are added during creation.
 document.addEventListener('DOMContentLoaded', () => {
     // The restartButton constant is already defined globally,
-    // but it's good practice to ensure it's not null if accessed here.
+
+    if (startGameButtonElement) {
+        startGameButtonElement.addEventListener('click', startGame);
+    } else {
+        console.error("Start Game button not found!");
+    }
+
     if (restartButton) {
-        restartButton.addEventListener('click', initializeGame);
+        // Restart button now takes you back to mode selection
+        restartButton.addEventListener('click', showModeSelectionScreen);
     } else {
         console.error("Restart button not found!");
     }
     if (playAgainButton) {
-        playAgainButton.addEventListener('click', initializeGame);
+        playAgainButton.addEventListener('click', showModeSelectionScreen);
     } else {
         console.error("Play Again button not found on overlay!");
     }
+    if (rulebookButton) {
+        rulebookButton.addEventListener('click', () => {
+            rulebookOverlay.classList.remove('overlay-hidden');
+            rulebookOverlay.classList.add('visible');
+        });
+    }
+    if (closeRulebookButton) {
+        closeRulebookButton.addEventListener('click', () => {
+            rulebookOverlay.classList.add('overlay-hidden');
+            rulebookOverlay.classList.remove('visible');
+        });
+    }
 
-    // Start the game
-    initializeGame();
+    // Initially, show the mode selection screen
+    showModeSelectionScreen();
 });
