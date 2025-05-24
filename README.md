@@ -2,6 +2,10 @@
 
 A web-based implementation of the 9x9 Tic-Tac game, also known as Ultimate Tic-Tac-Toe, featuring a dynamic UI and engaging gameplay.
 
+## 🎮 Play Online
+
+You can play the game live here: [9x9 Tic-Tac Game](https://surajsk2003.github.io/9x9-Tic-Tac-game/)
+
 ## 🎯 Objective
 
 To win the main 3x3 board by winning any three mini-games in a row, column, or diagonal—similar to traditional Tic-Tac-Toe, but at a macro level.
