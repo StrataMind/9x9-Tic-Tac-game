@@ -367,3 +367,51 @@ button#restart-button:active {
 #close-rulebook-button:hover {
   color: #ff7f7f; /* Light red on hover */
 }
+
+/* Mobile Adjustments */
+@media (max-width: 600px) {
+  #title-container h1 {
+    font-size: 1.8em; /* Slightly smaller title on mobile */
+  }
+
+  #top-controls {
+    position: relative; /* Change from absolute to flow normally */
+    top: auto;          /* Reset absolute positioning offsets */
+    left: auto;         /* Reset absolute positioning offsets */
+    width: 100%;        /* Allow it to take width to center its content */
+    justify-content: center; /* Center the buttons within #top-controls */
+    margin-bottom: 15px; /* Space below the controls, before the board */
+    margin-top: 10px; /* Add some space above if it's the first element in game-screen */
+  }
+
+  .board {
+    grid-template-columns: repeat(3, 80px); /* Slightly smaller mini-boards */
+    grid-template-rows: repeat(3, 80px);
+  }
+  .mini-board {
+    height: 80px;
+    width: 80px;
+  }
+  .cell {
+    font-size: 18px; /* Adjust cell font size if mini-boards are smaller */
+  }
+
+  #game-status {
+    font-size: 1em; /* Adjust status font size */
+    padding: 10px 15px;
+  }
+
+  #game-over-message {
+    font-size: 2em; /* Adjust game over message size */
+  }
+
+  #play-again-button {
+    padding: 12px 25px;
+    font-size: 1.1em;
+  }
+
+  #rulebook-content {
+    padding: 20px; /* Reduce padding for smaller screens */
+    max-height: 75vh;
+  }
+}
